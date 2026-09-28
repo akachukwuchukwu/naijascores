@@ -1,169 +1,105 @@
-# NaijaScores — PHP 8 + MySQL livescore site
+# NaijaScores
 
-Fixtures, scores, standings, top scorers, head-to-head history, and team
-profiles for the Premier League, La Liga, Bundesliga and Serie A, built on
-the **football-data.org free tier**.
+Live football scores, standings, lineups and head-to-head history for 13 competitions, built on two third-party APIs with PHP 8 and MySQL. No framework.
 
-## Features
-- **Fixtures & scores** — all 12 free-tier competitions, by date, delayed per football-data.org's free tier
-- **Standings** — full table per league, including grouped tables for Champions League/World Cup/Euros group stages
-- **Top scorers** — per competition
-- **Head-to-head** — aggregate wins/draws/losses + last 10 meetings
-- **Team profiles** — founded year, venue, colours, coach, recent results, upcoming fixtures
-- **Goal events** — who scored, when, and who assisted, enriched from a second provider (API-Football)
-- **Lineups & predictions** — confirmed starting XI/formation, and pre-match win/draw/loss forecasts
-- **NPFL** — fully tracked (fixtures, scores, standings), sourced primarily from API-Football
-- **Favorites, notifications, search** — client-side team following, browser notifications for watched matches, team search
+**Live demo:** https://naijascores.duckdns.org
 
-## Two data sources, one system of record
-football-data.org is the **primary source** for 12 competitions — every match, team, and standing
-for those comes from it. API-Football serves two roles:
-1. **Enrichment** on those 12 competitions — goal events, lineups, predictions, resolved by
-   matching kickoff date + team names (the two providers use unrelated ID schemes).
-2. **Primary source** for competitions football-data.org doesn't cover at all — currently NPFL.
-   For these, API-Football's fixtures/teams/standings are written directly into the same
-   `matches`/`teams`/`standings` tables, with every ID it writes namespaced as
-   `(id_offset + their_id)` so it can never collide with football-data.org's IDs. This means
-   every existing page (fixtures, competition, match, team) works on NPFL data unmodified.
+<!-- Add a screenshot: save one as docs/screenshot.png, delete this comment, and uncomment the line below.
+![NaijaScores home page](docs/screenshot.png)
+-->
 
-If either provider is unreachable, unconfigured, or a match can't be resolved, the dependent
-feature just doesn't render — nothing else on the site depends on it.
+## What it does
 
-## Adding NPFL (or any other API-Football-only competition)
-1. Get an API-Football key (see step 1 above) and set `API_FOOTBALL_KEY`.
-2. Find the correct numeric league ID — **don't guess**, a wrong ID silently syncs the wrong
-   league's data:
-   ```bash
-   php bin/lookup_league.php "NPFL"
-   ```
-3. Copy the ID into `config.php`'s `api_football.leagues['NPFL']`.
-4. Run the migration if you haven't already: `mysql -u root -p < sql/005_add_npfl.sql`
-5. Sync once by hand, then set up cron:
-   ```bash
-   php bin/sync_npfl_matches.php
-   php bin/sync_npfl_standings.php
-   ```
-   ```cron
-   */20 * * * * php /path/to/app/bin/sync_npfl_matches.php >> /path/to/app/storage/sync.log 2>&1
-   0 */4 * * * php /path/to/app/bin/sync_npfl_standings.php >> /path/to/app/storage/sync.log 2>&1
-   ```
-   These share API-Football's 100-requests/day budget with the enrichment features on your other
-   12 competitions — 1 call per NPFL matches run, 1 per standings run, so keep the schedule modest.
+- Fixtures and scores by date for 12 competitions (Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie, Primeira Liga, Championship, Brazilian Série A, Champions League, European Championship, World Cup), plus Nigeria's NPFL
+- Standings, including group-stage tables for cup competitions
+- Top scorers, head-to-head history, and team profiles
+- Goal scorers and assists, confirmed lineups, and pre-match predictions, from a second API
+- Follow teams, filter the fixture list down to your teams, get browser notifications for matches you're watching (while the tab is open), and search teams
 
-## Stack
-- PHP 8.1+ (no framework, no Composer dependencies — just PDO + cURL, both
-  bundled with PHP; requires the `pdo_mysql` extension, which ships with
-  XAMPP by default)
-- MySQL 8 (or MariaDB 10.5+)
-- Plain HTML/CSS, no JS build step
+## How it's built
 
-## 1. Get API tokens
-Register for a free key at https://www.football-data.org/client/register.
-The free tier gives you 10 requests/minute and all 12 tracked competitions, but
-**scores are delayed** (not second-by-second live) and lineups/stats require
-a paid add-on — the site is built around that limitation, not against it.
+**Two APIs, one schema.** football-data.org is the primary source for 12 competitions. API-Football supplies goal events, lineups and predictions, and is the primary source for NPFL, which football-data.org doesn't cover. The two providers use unrelated numeric IDs, so every ID from API-Football is stored as `id_offset + their_id` (an offset of 1,000,000,000). Both sources live in the same `matches`, `teams` and `standings` tables with no collisions, and every page works on either source without changes.
 
-Optionally, for goal-scorer/assist data, also register a free key at
-https://www.api-football.com (100 requests/day free). Skip this if you don't
-want goal events — the rest of the site works fine without it.
+**Built around rate limits.** football-data.org allows 10 requests a minute and API-Football 100 a day. One request fetches fixtures for every competition at once. Slower-changing data (standings, scorers, head-to-head, team profiles, lineups) is cached on disk with lifetimes matched to how fast it changes, and the standings job spaces its calls to stay under the per-minute cap.
 
-## 2. Create the database
+**Failures degrade quietly.** If a provider is down, over quota or unconfigured, the feature that depends on it doesn't render. Nothing else breaks.
+
+**Secrets stay out of the repo.** `config/config.php` is gitignored and reads everything from environment variables. The Docker image is built from `config.example.php`, and real values are injected at runtime, so nothing sensitive is baked into an image layer.
+
+## Run it locally
+
+You need PHP 8.1+ with `pdo_mysql` and `curl`, MySQL 8 or MariaDB 10.5+, and a free [football-data.org](https://www.football-data.org/client/register) token. A free [API-Football](https://www.api-football.com) key is optional; it enables goal events, lineups, predictions and NPFL.
+
 ```bash
+git clone https://github.com/akachukwuchukwu/naijascores.git
+cd naijascores
+
+# Create the database and a user for the app
 mysql -u root -p < sql/schema.sql
-```
-Then create an app-specific DB user with access to the `livescore` database.
+mysql -u root -p -e "CREATE USER 'livescore_app'@'localhost' IDENTIFIED BY 'choose-a-password'; GRANT ALL ON livescore.* TO 'livescore_app'@'localhost';"
 
-**Already have this app running from before adding scorers/H2H/team pages?**
-Run the migration instead of dropping your data:
+# Create your config, then fill in the database password and API keys
+cp config/config.example.php config/config.php
+```
+
+`config.php` reads these environment variables, falling back to the values written in the file: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`, `FOOTBALL_DATA_TOKEN`, `API_FOOTBALL_KEY`.
+
+Then load some data and start the server:
+
 ```bash
-mysql -u root -p < sql/002_add_team_profile.sql
-```
-(Skip this on a brand new install — `schema.sql` already includes those columns.)
-
-## 3. Make sure `storage/cache/` is writable
-Head-to-head, scorers, and team profile lookups are cached to disk so
-repeat page views don't burn API calls. PHP needs write access to this
-folder:
-```bash
-mkdir -p storage/cache
-chmod 775 storage/cache   # or whatever your web server user needs
-```
-If this folder isn't writable, the app still works — it just re-fetches
-from the API on every view of those tabs instead of caching.
-
-## 3. Configure
-Set these as real environment variables (in your web server config, a
-`.env` loader, or your shell) rather than editing `config/config.php`
-directly:
-
-```
-DB_HOST=127.0.0.1
-DB_NAME=livescore
-DB_USER=livescore_app
-DB_PASS=your-db-password
-FOOTBALL_DATA_TOKEN=your-football-data-org-token
-API_FOOTBALL_KEY=your-api-football-key
-```
-
-## 4. Run the sync jobs
-Two cron entries — deliberately split so you never get close to the free
-tier's rate limit:
-
-```cron
-# Fixtures + scores: 1 API call per run, safe to run every minute
-* * * * * php /path/to/app/bin/sync_matches.php >> /path/to/app/storage/sync.log 2>&1
-
-# Standings: 4 API calls per run (one per league), run less often
-*/15 * * * * php /path/to/app/bin/sync_standings.php >> /path/to/app/storage/sync.log 2>&1
-```
-
-Run both once by hand first so the site isn't empty:
-```bash
-php bin/sync_matches.php
 php bin/sync_standings.php
-```
-
-## 5. Serve the site
-Point your web server's document root at `public/`. For local testing:
-```bash
+php bin/sync_matches.php
 php -S localhost:8000 -t public
 ```
-Then visit http://localhost:8000.
+
+Open http://localhost:8000.
+
+`sql/schema.sql` is complete for a fresh install. The files `sql/002` to `sql/005` only upgrade databases created by older versions.
+
+For NPFL, find the league ID with `php bin/lookup_league.php "NPFL"` and set it under `api_football.leagues` in `config.php`. See the limitations below before you do.
+
+## Run it with Docker
+
+```bash
+cp .env.example .env          # fill in passwords and API keys
+docker compose up -d --build
+docker compose exec app php bin/sync_standings.php
+```
+
+Open http://localhost:8080. This starts the app (PHP 8.3 with Apache) and MySQL 8, with the scheduled jobs running inside the app container. [DOCKER.md](DOCKER.md) covers how it works and the problems worth knowing about.
+
+## Scheduled jobs
+
+| Job | Schedule | API calls per run |
+|---|---|---|
+| `bin/sync_matches.php` (fixtures and scores) | every minute | 1 |
+| `bin/sync_standings.php` (12 competitions) | every 15 minutes | 12, spaced 7 seconds apart |
+| `bin/sync_npfl_matches.php` | every 20 minutes | 1 |
+| `bin/sync_npfl_standings.php` | every 4 hours | 1 |
+
+The Docker image already includes these in `docker/crontab`. On a plain server, add them to your own crontab.
+
+## Known limitations
+
+These come from the free tiers of the two APIs, not from the code:
+
+- **Scores are delayed.** football-data.org's free tier isn't live. The page refreshes every minute during live matches.
+- **Goal events, lineups and predictions only work for matches within about a day of today.** API-Football's free plan restricts its date lookup to that window. Older matches show a message saying so.
+- **NPFL shows a past season.** On API-Football's free plan the NPFL is only available for 2022 to 2024, so the demo shows the 2023/24 season. A paid plan unlocks the current one.
+- **Browser notifications need the tab open.** They poll while the page is open; they aren't push notifications.
 
 ## Project layout
+
 ```
-config/config.php            DB + both providers' credentials (reads from env vars)
-src/Database.php              PDO connection
-src/FootballDataClient.php    HTTP client for api.football-data.org/v4 (primary, 12 competitions)
-src/ApiFootballClient.php     HTTP client for API-Football (enrichment + NPFL primary source)
-src/Sync.php                  Upserts football-data.org data into MySQL
-src/ApiFootballSync.php       Upserts API-Football data into MySQL, with ID-offset namespacing
-src/FixtureResolver.php       Resolves a match to its API-Football fixture ID, cached
-src/MatchEventsService.php    Goal events (who scored, when, assisted by whom)
-src/MatchInsightsService.php  Lineups + pre-match predictions
-src/Queries.php               Read-only queries + view helpers used by pages
-bin/sync_matches.php          Cron: football-data.org fixtures & scores (1 API call/run)
-bin/sync_standings.php        Cron: football-data.org standings (12 API calls/run, spaced)
-bin/sync_npfl_matches.php     Cron: NPFL fixtures & scores from API-Football (1 API call/run)
-bin/sync_npfl_standings.php   Cron: NPFL standings from API-Football (1 API call/run)
-bin/lookup_league.php         One-off: find a competition's API-Football league ID
-public/index.php              Homepage — all tracked competitions, by date
-public/competition.php        One competition: Fixtures & Table / Top Scorers tabs
-public/match.php              Match detail — Summary / Lineups / Table / H2H tabs
-public/team.php                Team profile — bio, recent results, upcoming fixtures
-public/search.php              Team search
-sql/schema.sql                 Full schema for a fresh install
-sql/002-005_*.sql              Migrations for existing installs, in order
-storage/cache/                  File cache for enrichment API responses
+bin/          Sync jobs and the league-ID lookup tool
+config/       config.example.php (copy to config.php)
+docker/       Container entrypoint and cron schedule
+public/       Web root: pages, partials, assets, and the JSON status endpoint
+sql/          schema.sql, plus upgrade migrations
+src/          API clients, sync services, queries, fixture resolver, events and insights services
+storage/      On-disk cache (gitignored contents)
 ```
 
-## Notes on the free tiers
-- football-data.org's scores are delayed, not push-live — the UI polls the page rather than
-  promising real-time ticking. A page meta-refresh or a small `fetch()` polling loop (every
-  30–60s) is the honest way to simulate "live" here; don't build WebSocket infrastructure
-  against a feed that isn't real-time.
-- API-Football's free tier is 100 requests/day total, shared across enrichment (events,
-  lineups, predictions) and NPFL's primary sync. Everything that uses it is cached — but if
-  you add more API-Football-primary competitions or get heavy simultaneous traffic during
-  live matches, you can still hit the ceiling. When that happens, the affected feature just
-  stops updating until quota resets at midnight — nothing else on the site is affected.
+## Deployment
+
+The live demo runs on Oracle Cloud's Always Free tier: Ubuntu 24.04, Apache, PHP 8.3 and MySQL 8, with HTTPS from Let's Encrypt and the four sync jobs on real cron.
