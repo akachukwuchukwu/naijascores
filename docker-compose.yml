@@ -1,0 +1,48 @@
+services:
+  app:
+    build: .
+    ports:
+      # Host port 8080, not 80 — this runs alongside the real Apache site
+      # (already on port 80/443) without any conflict, so the live site is
+      # completely unaffected while you test this.
+      - "8080:80"
+    environment:
+      DB_HOST: db          # the service name below — Docker's internal DNS
+      DB_PORT: "3306"      # resolves this to the db container automatically
+      DB_NAME: livescore
+      DB_USER: livescore_app
+      DB_PASS: ${DB_PASS}
+      FOOTBALL_DATA_TOKEN: ${FOOTBALL_DATA_TOKEN}
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
+      CRON_SECRET: ${CRON_SECRET:-change-this-to-something-random}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - cache_data:/var/www/html/storage/cache
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: livescore
+      MYSQL_USER: livescore_app
+      MYSQL_PASSWORD: ${DB_PASS}
+    volumes:
+      - db_data:/var/lib/mysql
+      # Only schema.sql is needed here (not the 002-005 migration files) —
+      # those exist to upgrade an *existing* database and would just error
+      # with "duplicate column" against a brand new one, same as we saw
+      # when running them by hand on the real Oracle deployment.
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  cache_data:

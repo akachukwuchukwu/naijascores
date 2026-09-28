@@ -1,0 +1,4 @@
+* * * * * root . /etc/environment; /usr/local/bin/php /var/www/html/bin/sync_matches.php >> /var/www/html/storage/sync.log 2>&1
+*/15 * * * * root . /etc/environment; /usr/local/bin/php /var/www/html/bin/sync_standings.php >> /var/www/html/storage/sync.log 2>&1
+*/20 * * * * root . /etc/environment; /usr/local/bin/php /var/www/html/bin/sync_npfl_matches.php >> /var/www/html/storage/sync.log 2>&1
+0 */4 * * * root . /etc/environment; /usr/local/bin/php /var/www/html/bin/sync_npfl_standings.php >> /var/www/html/storage/sync.log 2>&1

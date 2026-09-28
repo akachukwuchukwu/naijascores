@@ -1,0 +1,8 @@
+.git
+.gitignore
+config/config.php
+.env
+storage/cache/*.json
+*.md
+DEPLOYMENT.md
+ORACLE_DEPLOYMENT.md
